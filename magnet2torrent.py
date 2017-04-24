@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 '''
-Created on Apr 19, 2012
-@author: dan, Faless
+
+    Original author: Dan Faless (2012)
+    Complete refactor: Enrico Lamperti (2017)
 
     GNU GENERAL PUBLIC LICENSE - Version 3
 
@@ -24,120 +25,97 @@ Created on Apr 19, 2012
 
 import shutil
 import tempfile
-import os.path as pt
+import os
 import sys
-import libtorrent as lt
 from time import sleep
-from argparse import ArgumentParser
+
+import libtorrent
 
 
-def magnet2torrent(magnet, output_name=None):
-    if output_name and \
-            not pt.isdir(output_name) and \
-            not pt.isdir(pt.dirname(pt.abspath(output_name))):
-        print("Invalid output folder: " + pt.dirname(pt.abspath(output_name)))
-        print("")
-        sys.exit(0)
+def magnet2torrent(magnet_file, output_name, timeout):
+    if not os.path.isfile(magnet_file):
+        print ("Magnet file doesn't exist")
+        sys.exit(1)
 
-    tempdir = tempfile.mkdtemp()
-    ses = lt.session()
+    if os.path.isfile(output_name):
+        print ("Destination file already exists")  # avoids overwriting
+        sys.exit(1)
+
+    # Read magnet file
+    with open(magnet_file, 'r') as mf:
+        magnet = mf.read()
+
+    # Let's get going!
+    temp_dir = tempfile.mkdtemp()
+    session = libtorrent.session()
+
     params = {
-        'save_path': tempdir,
-        'storage_mode': lt.storage_mode_t(2),
+        'save_path': temp_dir,
+        # 'storage_mode': libtorrent.storage_mode_t(2),
         'paused': False,
         'auto_managed': True,
-        'duplicate_is_error': True
+        # 'duplicate_is_error': True,
+        'url': magnet
     }
-    handle = lt.add_magnet_uri(ses, magnet, params)
+    new_torrent = session.add_torrent(params)
 
-    print("Downloading Metadata (this may take a while)")
-    while (not handle.has_metadata()):
+    def clean_up_and_exit(with_value=0):
+        # Stop the torrent
         try:
+            session.remove_torrent(new_torrent)
+        except:
+            session.pause()
+
+        # Remove temp directory
+        if os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir)
+
+        sys.exit(with_value)
+
+    ticks = 0
+    while (not new_torrent.has_metadata()):
+        try:
+            # Wait for the metadata
             sleep(1)
-        except KeyboardInterrupt:
-            print("Aborting...")
-            ses.pause()
-            print("Cleanup dir " + tempdir)
-            shutil.rmtree(tempdir)
-            sys.exit(0)
-    ses.pause()
-    print("Done")
 
-    torinfo = handle.get_torrent_info()
-    torfile = lt.create_torrent(torinfo)
+            # Or fail if wait time was exceeded
+            ticks += 1
+            if ticks == timeout:
+                clean_up_and_exit(1)
 
-    output = pt.abspath(torinfo.name() + ".torrent")
+        except (KeyboardInterrupt, SystemExit):
+            clean_up_and_exit(1)
 
-    if output_name:
-        if pt.isdir(output_name):
-            output = pt.abspath(pt.join(
-                output_name, torinfo.name() + ".torrent"))
-        elif pt.isdir(pt.dirname(pt.abspath(output_name))):
-            output = pt.abspath(output_name)
+    # Now we have the metadata the torrent needs to be paused
+    # (to avoid starting the download)
+    session.pause()
 
-    print("Saving torrent file here : " + output + " ...")
-    torcontent = lt.bencode(torfile.generate())
-    f = open(output, "wb")
-    f.write(lt.bencode(torfile.generate()))
-    f.close()
-    print("Saved! Cleaning up dir: " + tempdir)
-    ses.remove_torrent(handle)
-    shutil.rmtree(tempdir)
+    # Prepare torrent file
+    torrent_info = new_torrent.get_torrent_info()
+    torrent_file = libtorrent.create_torrent(torrent_info)
+    output = libtorrent.bencode(torrent_file.generate())
 
-    return output
+    # and save it!
+    with open(output_name, "wb") as of:
+        of.write(output)
+
+    # Clean up
+    clean_up_and_exit()
+
 
 def main():
-    parser = ArgumentParser(description="A command line tool that converts magnet links in to .torrent files")
-    parser.add_argument('-m','--magnet', help='The magnet url')
-    parser.add_argument('-o','--output', help='The output torrent file name')
+    if len(sys.argv) < 3:
+        print("Wrong arguments (expected: magnet_file output_name [timeout])")
+        sys.exit(1)
 
-    #
-    # This second parser is created to force the user to provide
-    # the 'output' arg if they provide the 'magnet' arg.
-    #
-    # The current version of argparse does not have support
-    # for conditionally required arguments. That is the reason
-    # for creating the second parser
-    #
-    # Side note: one should look into forking argparse and adding this
-    # feature.
-    #
-    conditionally_required_arg_parser = ArgumentParser(description="A command line tool that converts magnet links in to .torrent files")
-    conditionally_required_arg_parser.add_argument('-m','--magnet', help='The magnet url')
-    conditionally_required_arg_parser.add_argument('-o','--output', help='The output torrent file name', required=True)
+    magnet_file = sys.argv[1]
+    output_name = sys.argv[2]
+    try:
+        timeout = int(sys.argv[3])
+    except:
+        timeout = 60
 
-    magnet = None
-    output_name = None
-
-    #
-    # Attempting to retrieve args using the new method
-    #
-    args = vars(parser.parse_known_args()[0])
-    if args['magnet'] is not None:
-        magnet = args['magnet']
-        argsHack = vars(conditionally_required_arg_parser.parse_known_args()[0])
-        output_name = argsHack['output']
-    if args['output'] is not None and output_name is None:
-        output_name = args['output']
-        if magnet is None:
-            #
-            # This is a special case.
-            # This is when the user provides only the "output" args.
-            # We're forcing him to provide the 'magnet' args in the new method
-            #
-            print ('usage: {0} [-h] [-m MAGNET] -o OUTPUT'.format(sys.argv[0]))
-            print ('{0}: error: argument -m/--magnet is required'.format(sys.argv[0]))
-            sys.exit()
-    #
-    # Defaulting to the old of doing things
-    # 
-    if output_name is None and magnet is None:
-        if len(sys.argv) >= 2:
-            magnet = sys.argv[1]
-        if len(sys.argv) >= 3:
-            output_name = sys.argv[2]
-
-    magnet2torrent(magnet, output_name)
+    magnet2torrent(magnet_file, output_name, timeout)
 
 
 if __name__ == "__main__":
