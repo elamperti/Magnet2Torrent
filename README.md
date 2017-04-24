@@ -1,24 +1,21 @@
 # Magnet2Torrent
 
-A command line tool that converts magnet links in to .torrent files.
-
-### This project is mostly abandoned. I will still merge most pull requests.
+A command line tool that converts magnet links in to `.torrent` files.
 
 ## Requirements
 * python
 * python-libtorrent (libtorrent-rasterbar version 0.16 or later)
 
-## Install python-libtorrent on Ubuntu
+### Ubuntu
 `sudo apt-get install python-libtorrent -y`
 
-## Install python-libtorrent on macOS
+### macOS
 `brew install libtorrent-rasterbar --with-python`
 
 ## How to Use
-`python Magnet_To_Torrent2.py <magnet link> [torrent file]`
+`python Magnet_To_Torrent2.py <magnet file> <torrent file> [<timeout in seconds>]`
 
-### Example
-`python Magnet_To_Torrent2.py -m "magnet:?xt=urn:btih:49fbd26322960d982da855c54e36df19ad3113b8&dn=ubuntu-12.04-desktop-i386.iso&tr=udp%3A%2F%2Ftracker.openbittorrent.com" -o ubunut12-04.iso`
+Timeout defaults to 60 seconds. Current implementation considers rough seconds since the torrent creation (not since program started).
 
 ## Licenses
 All code is licensed under the [GPL version 3](http://www.gnu.org/licenses/gpl.html)
